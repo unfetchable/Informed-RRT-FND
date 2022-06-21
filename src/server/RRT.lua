@@ -1,0 +1,540 @@
+--Nicolai & Perpelea, Edited on March 19th 2022, 19:54 GMT+1
+local rrt = {}
+rrt.__index = rrt
+
+local Node = {}
+Node.__index = Node
+
+local ShortestPath = {0}
+local OldLength = {0}
+local CurrentIteration = {0}
+local CurrentEndPoint = {0}
+
+function lerp(a,b,t)
+	return a+(b-a)*t
+end
+
+function rrt.new(start, goal, randArea, expandDis, goalSampleRate, MaxNode, MaxIter)
+	local self = setmetatable({}, rrt)
+	self.start = Node.new(start[1], start[2], start[3])
+	self.endpoint = Node.new(goal[1], goal[2], goal[3])
+	self.Xrand = randArea[1]
+	self.Yrand = randArea[2]
+	self.Zrand = randArea[3]
+	self.expandDis = expandDis
+	self.goalSampleRate = goalSampleRate
+	self.MaxNode = MaxNode
+	self.MaxIter = MaxIter
+	return self
+end
+
+function rrt:_Start(info)
+	self.nodeList = {[1]= self.start}	
+
+	for i = 1,self.MaxIter do
+		if CurrentEndPoint[1] == 0 then
+			self.endpoint = Node.new(workspace.End.Position.X*3,workspace.End.Position.Y*3,workspace.End.Position.Z*3)
+			CurrentEndPoint[1] = workspace.End.Position*3
+		elseif CurrentEndPoint[1] ~= workspace.End.Position*3 then
+			self.endpoint = Node.new(workspace.End.Position.X*3,workspace.End.Position.Y*3,workspace.End.Position.Z*3)
+			CurrentEndPoint[1] = workspace.End.Position*3
+			self.expandDis = 15
+			ShortestPath = {0}
+			OldLength = {0}
+			CurrentIteration = {0}
+		end
+
+		local rnd
+		if ShortestPath[1] ~= 0 then
+			rnd = self:_heuristic_random_point()
+		else
+			rnd = self:_get_random_point()
+		end
+
+		local nind = self:_GetNearestListIndex(rnd)
+		local newNode = self:_steer(rnd, nind)
+
+
+		--Intersection
+		local nearestNode = self.nodeList[nind]
+
+		local dx = newNode.x - nearestNode.x
+		local dy = newNode.y - nearestNode.y
+		local dz = newNode.z - nearestNode.z
+		local d = math.sqrt(dx^2 + dy^2 + dz^2)
+
+
+		if self:_check_collision_extend(nearestNode.x, nearestNode.y, nearestNode.z, newNode.x, newNode.y, newNode.z, d) then
+			local nearinds = self:_find_near_nodes(newNode,5) 
+			local newNode = self:_choose_parent(newNode, nearinds)
+			self.nodeList[i+99] = newNode
+
+			self:_rewire(i+99, newNode, nearinds) 
+			table.insert(self.nodeList[newNode.parent].children,(rrt:_len(self.nodeList[newNode.parent].children))+1,i+99)
+
+			if rrt:_len(self.nodeList) > self.MaxNode then
+				local leaves = {}
+
+				for key, node in pairs(self.nodeList) do
+					if rrt:_len(node.children) == 0 and rrt:_len(self.nodeList[node.parent].children) > 1 then 
+						leaves[key] = key
+					end
+				end
+
+				if #leaves > 1 then
+					local ind = leaves[math.random(1,(#leaves)-1)]
+					table.remove(self.nodeList[self.nodeList[ind].parent].children, table.find(self.nodeList[self.nodeList[ind].parent].children,ind))	
+					self.nodeList[ind] = nil
+				else
+					local leaves2 = {}
+					for key, node in pairs(self.nodeList) do
+						if rrt:_len(node.children) == 0 then
+							table.insert(leaves2,(#leaves2)+1,key)
+						end
+					end
+
+					local ind = leaves2[math.random(1,(#leaves2)-1)]
+					table.remove(self.nodeList[self.nodeList[ind].parent].children, table.find(self.nodeList[self.nodeList[ind].parent].children,ind))	
+					self.nodeList[ind] = nil
+				end
+			end
+		end
+
+
+		if i%10 == 0 then
+			rrt:_DrawGraph(self.nodeList,self.start,self.endpoint,self.expandDis)
+			if i%10 == 0 then 
+				for _,v in pairs(workspace.Nodes2:GetChildren()) do
+					v:Destroy()
+				end
+
+				for _,node in pairs(self.nodeList) do
+					local prt = Instance.new("Part")
+					prt.Parent = workspace.Nodes2
+					prt.Size = Vector3.new(1.5,1.5,1.5)
+					prt.Position = Vector3.new(node.x,node.y,node.z)/3
+					prt.Anchored = true
+					prt.Locked = true
+					prt.CanCollide = false
+
+
+					prt.Shape = Enum.PartType.Ball
+					prt.Material = Enum.Material.SmoothPlastic
+					prt.Color = Color3.fromRGB(190, 0, 3)
+					if node.parent ~= nil then
+						local Magnitude = (Vector3.new(node.x,node.y,node.z)-Vector3.new(self.nodeList[node.parent].x,self.nodeList[node.parent].y,self.nodeList[node.parent].z)).magnitude
+						local prt = Instance.new("Part")
+						prt.Parent = workspace.Nodes2
+						prt.Locked = true
+						prt.Size = Vector3.new(.8,.8,Magnitude/3)
+						prt.Position = Vector3.new(lerp(node.x,self.nodeList[node.parent].x,.5),lerp(node.y,self.nodeList[node.parent].y,.5),lerp(node.z,self.nodeList[node.parent].z,.5))/3
+						prt.Anchored = true
+						prt.CanCollide = false
+						prt.CFrame = CFrame.new(prt.Position,Vector3.new(self.nodeList[node.parent].x,self.nodeList[node.parent].y,self.nodeList[node.parent].z)/3)
+						prt.Material = Enum.Material.SmoothPlastic
+						prt.Color = Color3.fromRGB(255, 65, 68)
+					end
+				end
+				if CurrentIteration[1] ~= 0 then
+					self.expandDis = 30
+					local path = CurrentIteration[1]
+					local ind = rrt:_len(CurrentIteration[1])
+
+					while ind > 1 do
+						local p1 = Vector3.new(path[ind][1]/3,path[ind][2]/3,path[ind][3]/3)
+						local p2 = Vector3.new(path[ind-1][1]/3,path[ind-1][2]/3,path[ind-1][3]/3)
+
+						local Magnitude = (p1-p2).Magnitude
+
+						local Segment = Instance.new("Part",workspace.Heuristic)
+						Segment.Anchored = true
+						Segment.Locked = true
+						Segment.CanCollide = false
+						Segment.Position = p1+(p2-p1)*.5
+						Segment.CFrame = CFrame.new(Segment.Position,p2) 
+						Segment.Size = Vector3.new(2,2,Magnitude)
+						Segment.Material = Enum.Material.SmoothPlastic
+						Segment.Color = Color3.fromRGB(89, 255, 0)
+
+						ind-=1
+					end
+				end
+
+				wait()
+			end
+			for _,v in pairs(workspace.Heuristic:GetChildren()) do
+				v:Destroy()
+			end
+		end
+	end
+	for _,v in pairs(workspace.Nodes2:GetChildren()) do
+		v:Destroy()
+	end
+
+	if CurrentIteration[1] ~= 0 then
+		local path = CurrentIteration[1]
+		local ind = rrt:_len(CurrentIteration[1])
+
+		while ind > 1 do
+			local p1 = Vector3.new(path[ind][1]/3,path[ind][2]/3,path[ind][3]/3)
+			local p2 = Vector3.new(path[ind-1][1]/3,path[ind-1][2]/3,path[ind-1][3]/3)
+
+			local Magnitude = (p1-p2).Magnitude
+
+			local Segment = Instance.new("Part",workspace.Detect)
+			Segment.Anchored = true
+			Segment.Position = p1+(p2-p1)*.5
+			Segment.CFrame = CFrame.new(Segment.Position,p2) 
+			Segment.Size = Vector3.new(2,2,Magnitude)
+			Segment.CanCollide = false
+			Segment.Material = Enum.Material.SmoothPlastic
+			Segment.Color = Color3.fromRGB(89, 255, 0)
+
+			ind-=1
+			wait(.05)
+		end
+	end
+	return self.nodeList
+end
+
+function rrt:_DrawGraph(nodeList,start,endpoint,expandDis)
+	local lastIndex = self:_get_best_last_index(nodeList,endpoint,expandDis)
+
+
+	if lastIndex ~= nil then
+		local path = self:_gen_final_course(lastIndex,start,endpoint,nodeList)
+		local ind = rrt:_len(path)
+		local pathlength = 0
+		local PointMag = (workspace.Start.Position-workspace.End.Position).magnitude
+
+		while ind > 1 do
+			local distance = ((Vector3.new(path[ind-1][1], path[ind-1][2], path[ind-1][3]))-(Vector3.new(path[ind][1], path[ind][2], path[ind][3]))).magnitude
+			pathlength = pathlength + distance
+
+			ind-=1
+		end
+
+		local start = Vector3.new(start.x,start.y,start.z)
+		local endpoint = Vector3.new(endpoint.x,endpoint.y,endpoint.z)
+
+		local MajorAxis = ShortestPath[1]
+		local FocalLength = (math.sqrt(((start.X-endpoint.X)^2)+((start.Y-endpoint.Y)^2)+((start.Z-endpoint.Z)^2))/2)
+		local MinorAxis = math.sqrt(((MajorAxis/2)^2)-FocalLength^2)
+		local Center = start+(endpoint-start)*.5
+
+		local prt = script.Parent.Heuristic:Clone()
+		prt.Parent = workspace.Heuristic
+		prt.Anchored = true
+		prt.Locked = true
+		prt.CanCollide = false
+		prt.Size = Vector3.new(MinorAxis,MinorAxis,MajorAxis)/3
+		prt.Position = Center/3
+		prt.CFrame = CFrame.new(prt.Position,endpoint/3)
+		prt.Color = Color3.fromRGB(255, 0, 4) 
+		prt.Material = Enum.Material.ForceField
+
+
+		if pathlength < OldLength[1] then
+			CurrentIteration[1] = path
+			OldLength[1] = pathlength
+		elseif OldLength[1] == 0 then
+			CurrentIteration[1] = path
+			OldLength[1] = pathlength
+		end
+
+
+		if (PointMag*3+1  ~= ShortestPath[1] and PointMag*3+1 < ShortestPath[1]) then
+			if ShortestPath[1] > pathlength then
+				prt.Color = Color3.fromRGB(255, 255, 0) 
+				ShortestPath[1] = pathlength
+			else
+				ShortestPath[1] = ShortestPath[1]  - .05
+			end
+		elseif ShortestPath[1] == 0 then
+			ShortestPath[1] = pathlength
+		end
+	end
+end
+
+function rrt:_gen_final_course(goalind,start,endpoint,nodeList)
+	local path = {{endpoint.x, endpoint.y, endpoint.z}}
+
+	while nodeList[goalind].parent ~= nil do
+		local node = nodeList[goalind]
+		table.insert(path,rrt:_len(path) + 1,{node.x, node.y, node.z})
+		goalind = node.parent
+	end
+	table.insert(path,rrt:_len(path) + 1,{start.x, start.y, start.z})
+	return path
+end
+
+
+function rrt:_path_validation(nodeList,startpoint,endpoint,expandDis)
+	local lastIndex = self:_get_best_last_index(nodeList,endpoint,expandDis)
+	if lastIndex ~= nil then
+		while nodeList[lastIndex].parent ~= nil do
+			local nodeInd = lastIndex
+			lastIndex = nodeList[lastIndex].parent
+
+			local dx = nodeList[nodeInd].x - nodeList[lastIndex].x
+			local dy = nodeList[nodeInd].y - nodeList[lastIndex].y
+			local dz = nodeList[nodeInd].z - nodeList[lastIndex].z
+			local d = math.sqrt(dx^2 + dy^2 + dz^2)
+
+			if not self:_check_collision_extend(nodeList[lastIndex].x, nodeList[lastIndex].y,nodeList[lastIndex].z, nodeList[nodeInd].x,nodeList[nodeInd].y,nodeList[nodeInd].z, d) then
+				table.remove(nodeList.children, nodeInd)					
+				self:_remove_branch(nodeInd) 
+			end
+		end
+	end
+end
+
+function rrt:_remove_branch(nodeInd)
+	for ix in self.nodelist[nodeInd].children do
+		self:_remove_branch(ix)
+	end
+
+	table.remove(self.nodeList, nodeInd)
+end
+
+function rrt:_choose_parent(newNode, nearinds)
+	if #nearinds == 0 then
+		return newNode
+	end
+
+	local dlist = {}
+
+	for _,i in pairs(nearinds) do
+		local dx = newNode.x - self.nodeList[i].x
+		local dy = newNode.y - self.nodeList[i].y
+		local dz = newNode.z - self.nodeList[i].z
+		local d = math.sqrt(dx^2 + dy^2 + dz^2)
+
+		if self:_check_collision_extend(self.nodeList[i].x, self.nodeList[i].y, self.nodeList[i].z, newNode.x, newNode.y, newNode.z, d) then
+			table.insert(dlist,(#dlist) + 1,self.nodeList[i].cost + d)
+		else
+			table.insert(dlist,(#dlist) + 1,"inf")
+		end
+	end
+
+	local mincost = math.min(table.unpack(dlist))
+	local minind = nearinds[table.find(dlist,mincost)]
+
+	if mincost == math.huge then
+		print("mincost is inf")
+
+		return newNode
+	end
+
+	newNode.cost = mincost
+	newNode.parent = minind
+
+	return newNode
+end
+
+function rrt:_heuristic_random_point()
+	local rnd
+	if math.random(0, 100) > self.goalSampleRate then
+		local start = Vector3.new(self.start.x,self.start.y,self.start.z)
+		local endpoint = Vector3.new(self.endpoint.x,self.endpoint.y,self.endpoint.z)
+
+		local MajorAxis = ShortestPath[1]
+		local FocalLength = (math.sqrt(((start.X-endpoint.X)^2)+((start.Y-endpoint.Y)^2)+((start.Z-endpoint.Z)^2))/2)
+		local MinorAxis = math.sqrt(((MajorAxis/2)^2)-FocalLength^2)
+		local Center = start+(endpoint-start)*.5
+
+		local xa = math.random(-(MajorAxis/2),MajorAxis/2)
+		local intersept = (math.abs(MinorAxis*2)/math.abs(MajorAxis))*math.sqrt(((MajorAxis/2)^2)-xa^2)
+		local randomintersepty = math.random(-intersept/2,intersept/2)
+		local Z1 = math.abs(MinorAxis/2)*math.sqrt(1-xa^2/(MajorAxis/2)^2-randomintersepty^2/(MinorAxis/2)^2)
+		local randominterseptz = math.random(-Z1,Z1)
+
+		local randomposition = (CFrame.new(Center,start) * CFrame.new(randominterseptz,randomintersepty,xa)).Position
+
+
+		--[[local prt = Instance.new("Part")
+		prt.Parent = workspace.Heuristic
+		prt.Locked = true
+		prt.Anchored = true
+		prt.CanCollide = false
+		prt.Size = Vector3.new(2,2,2)
+		prt.Color = Color3.fromRGB(234, 0, 255)
+		prt.Position = Vector3.new(randomposition.X,randomposition.Y,randomposition.Z)/3
+		prt.Shape = Enum.PartType.Ball]]
+		rnd = {randomposition.X,randomposition.Y,randomposition.Z}
+	else
+		rnd = {self.endpoint.x, self.endpoint.y, self.endpoint.z}
+	end
+	return rnd
+end
+
+
+function rrt:_len(t)
+	local n = 0
+
+	for _,v in pairs(t) do
+		n = n + 1
+	end
+	return n
+end
+
+function rrt:_steer(rnd, nind)
+	local nearestNode = self.nodeList[nind]
+
+	local dx = rnd[1] - nearestNode.x
+	local dy = rnd[2] - nearestNode.y
+	local dz = rnd[3] - nearestNode.z
+	local d = math.sqrt(dx^2 + dy^2 + dz^2)
+
+	local newNode = Node.new(nearestNode.x, nearestNode.y, nearestNode.z)
+	newNode.x = nearestNode.x + (rnd[1]-nearestNode.x) * (self.expandDis/d)
+	newNode.y = nearestNode.y + (rnd[2]-nearestNode.y) * (self.expandDis/d)
+	newNode.z = nearestNode.z + (rnd[3]-nearestNode.z) * (self.expandDis/d)
+
+	newNode.cost = nearestNode.cost + self.expandDis
+	newNode.parent = nind
+	return newNode
+end
+
+
+function rrt:_get_random_point()
+	local rnd
+	if math.random(0,100) > self.goalSampleRate then
+		rnd = {math.random(0, self.Xrand), math.random(0, self.Yrand), math.random(0, self.Zrand)}
+	else
+		rnd = {self.endpoint.x, self.endpoint.y, self.endpoint.z}
+	end
+
+	return rnd
+end
+
+function rrt:_get_best_last_index(nodelist,endpoint,expandDis)
+	local goalinds = {}
+
+	for key, node in pairs(nodelist) do
+		local equation = math.sqrt(((node.x-endpoint.x)^2) + ((node.y-endpoint.y) ^2) + ((node.z-endpoint.z)^2))
+		if equation <= expandDis then
+			table.insert(goalinds,(#goalinds)+1,key)
+		end
+	end
+
+	if rrt:_len(goalinds) == 0 then
+		return nil
+	end
+
+	for _,i in pairs(goalinds) do
+		if nodelist[i].cost == math.min(nodelist[i].cost) then
+			return i
+		end
+	end
+
+	return nil
+end
+
+function rrt:_calc_dist_to_goal(a,b)
+	return math.sqrt(a^2 + b^2)
+end
+
+
+function rrt:_find_near_nodes(newNode, value)
+	local r = self.expandDis * value
+
+	local dlist = {}
+	local nearinds = {}
+
+	for Index,Child in pairs(self.nodeList) do
+		if (((Child.x - newNode.x)^2)+((Child.y - newNode.y)^2)+((Child.z - newNode.z)^2)) <= r^2 then
+			table.insert(dlist,Index,Child)
+		end
+	end
+
+	for Index,_ in pairs(self.nodeList) do
+		if dlist[Index] ~= nil then
+			table.insert(nearinds,(#nearinds)+1,Index)
+		end
+	end
+
+	return nearinds
+end
+
+function rrt:_rewire(newNodeInd, newNode, nearinds)
+	local nnode = rrt:_len(self.nodeList)
+	for set,element in pairs(nearinds) do
+		local nearNode = self.nodeList[element]
+
+		local dx = newNode.x - nearNode.x
+		local dy = newNode.y - nearNode.y
+		local dz = newNode.z - nearNode.z
+		local d = math.sqrt(dx^2 + dy^2 + dz^2)
+
+		local scost = newNode.cost + d
+
+		if nearNode.cost > scost then
+			if self:_check_collision_extend(nearNode.x, nearNode.y, nearNode.z, newNode.x, newNode.y, newNode.z, d) then
+				table.remove(self.nodeList[nearNode.parent].children,table.find(self.nodeList[nearNode.parent].children,element))
+
+				nearNode.parent = newNodeInd
+				nearNode.cost = scost
+
+				table.insert(newNode.children,(#newNode.children) +1,element)
+
+			end
+		end
+	end
+end
+
+--This needs to be rewritten
+
+function rrt:_check_collision_extend(nix, niy, niz, ix, iy, iz, d)
+	local rayOrigin = Vector3.new(nix,niy,niz)/3
+	local second = Vector3.new(ix,iy,iz)/3
+	local rayDirection = CFrame.lookAt(rayOrigin,second).LookVector*(d/3)
+
+	-- Build a "RaycastParams" object and cast the ray
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterDescendantsInstances = {workspace.Collisions}
+	raycastParams.FilterType = Enum.RaycastFilterType.Whitelist
+	local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+
+	if raycastResult ~= nil then
+		return false
+	else
+		return true
+	end
+end
+
+function rrt:_GetNearestListIndex(rnd) 
+	local dlist = {}
+	local dlist2 = {}
+	local nearinds = {}
+
+	for Index,Child in pairs(self.nodeList) do
+		table.insert(dlist,(#dlist)+1,{(Child.x - rnd[1])^2,(Child.y - rnd[2])^2,(Child.z - rnd[3])^2})
+	end
+
+	for Index,Child in pairs(dlist) do
+		table.insert(dlist2,Index,Child[1]+Child[2]+Child[3])
+	end
+
+	for Index,Child in pairs(self.nodeList) do
+		table.insert(nearinds,(#nearinds)+1,Index)
+	end
+
+	return nearinds[table.find(dlist2,math.min(table.unpack(dlist2)))]
+end
+
+
+function Node.new(x,y,z)
+	local self = setmetatable({}, Node)
+
+	self.x = x
+	self.y = y 
+	self.z = z
+	self.cost = 0.0
+	self.parent = nil
+	self.children = {}
+
+	return self 
+end
+
+return rrt
