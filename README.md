@@ -5,7 +5,7 @@ It's capable of making deviations to previous node iterations to negate the comp
 
 <p align="center"><b> Multidirectional Informed RRT* FND </b></p>
 <p align="center">
-  <image src="https://github.com/luca-paolo/Informed-RRT-FND/examples/visuals/Demonstration.gif" height="480"></image>
+  <image src="https://raw.githubusercontent.com/NicolaiXeno/Informed-RRT-FND/main/examples/visuals/Demonstration.gif" height="480"></image>
 </p>
 
 
